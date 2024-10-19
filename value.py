@@ -1,6 +1,7 @@
 from utils import inflation_coeff, salary_cousins_actual, salary_penix_actual
 import math
 from scipy.optimize import minimize
+from contract import Contract, ContractSeason
 
 
 def get_apy_prod_value_exp(prod):
@@ -83,6 +84,57 @@ def generic_qb_av_table(seasons, productions, salary_func, option_years=None, vo
     
     return surplus_val, breakdown
 
+def generic_qb_av_table_from_contract(productions, contract: Contract):
+    breakdown = []
+    for (year, contract_season), prod in zip(contract, productions):
+        # Get contract values
+        val_prod, inflation_adj = market_value(prod, year)
+        val_act = get_apy_prod_value_6_poly(year)
+        
+        # Set in season
+        contract_season.market_value = val_prod
+        contract_season.surplus_value = total_surplus_value
+        
+        
+        
+        # Option handling
+        if contract_season.is_option_year:
+            val_act = contract_season.option_salary
+            
+        # Void year handling
+        if contract_season.is_void_year:
+            val_prod = 0.0
+            val_act = contract_season.void_dead_cap
+            
+        season_val = val_prod - val_act
+        total_surplus_value = season_val
+        
+        
+        
+        season_breakdown = {'Season': year, 'QBR': prod, 'Market Sal': val_prod, 'Actual Sal': val_act, 'Inflation Adj': inflation_adj,'Tot. Surplus Value': total_surplus_value}
+        if contract.has_option_years:
+            season_breakdown['Option Sal'] = contract_season.option_salary if contract_season.is_option_year else '--'
+        if contract.has_void_years:
+            season_breakdown['Void Sal'] = contract_season.void_dead_cap if contract_season.is_void_year else '--'
+        breakdown.append(season_breakdown)
+        surplus_val += total_surplus_value
+    
+    return surplus_val, breakdown
+
+
+def handle_options(contract: Contract):
+    # If no option years, do nothing
+    if not contract.has_option_years:
+        return contract
+    
+    # If there are options, consider the value of each option year
+    for year, contract_season in contract:
+        
+        # Seek to option year
+        if not contract_season.is_option_year:
+            continue
+        
+        
 
 
 def defender_const_production():
