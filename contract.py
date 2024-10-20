@@ -36,7 +36,7 @@ class Contract:
         option_ix = 0
         void_ix = 0
         for ix, season in enumerate(range(start_year, end_year)):
-            base_salary = salaries[ix]
+            salary = salaries[ix]
             is_option_year = season >= option_year
             is_void_year = season >= void_year
             if is_option_year:
@@ -57,7 +57,7 @@ class Contract:
                 season,
                 is_option_year,
                 is_void_year,
-                base_salary,
+                salary,
                 option_salary,
                 option_dead_cap,
                 void_dead_cap,
@@ -71,23 +71,19 @@ class Contract:
         )
 
     def __str__(self):
-        if not len(self.breakdown) > 0:
-            return
+        if len(self.breakdown) == 0:
+            self.generate_breakdown()
         headers = self.breakdown[0].keys()
         rows = [x.values() for x in self.breakdown]
         return tabulate.tabulate(rows, headers)
 
-    def option_years(self) -> list:
-        return self.options.keys()
+    def __repr__(self) -> str:
+        start_year = self.seasons[0].year
+        end_year = self.seasons[-1].year
+        return f"Contract({start_year}-{end_year})"
 
-    def option_dead_cap(self) -> list:
-        return self.options.values()
-
-    def void_years(self) -> list:
-        return self.voids.keys()
-
-    def void_dead_cap(self) -> list:
-        return self.voids.values()
+    def __getitem__(self, ix):
+        return self.seasons[ix]
 
     def sort(self) -> None:
         self.seasons.sort(key=lambda x: x.year)
@@ -136,7 +132,7 @@ class Contract:
                 if contract_season.is_option_year and self.is_option_declined
                 else val_prod
             )
-            contract_season.actual_salary = contract_season.base_salary
+            contract_season.actual_salary = contract_season.salary
 
             # Option handling - skip if option has already been declined
             if contract_season.is_option_year and not self.is_option_declined:
@@ -166,9 +162,6 @@ class Contract:
             self.market_value += contract_season.market_salary
             self.total_value += contract_season.actual_salary
 
-            if year == 2030:
-                print(contract_season.market_salary)
-
         # Generate Breakdown
         self.generate_breakdown()
 
@@ -182,7 +175,7 @@ class Contract:
                 "Season": contract_season.year,
                 "QBR": contract_season.production,
                 "Market Sal": contract_season.market_salary,
-                "Actual Sal": contract_season.base_salary,
+                "Actual Sal": contract_season.salary,
                 "Inflation Adj": contract_season.inflation_adj,
                 "Tot. Surplus Value": contract_season.surplus_value,
             }
@@ -238,7 +231,7 @@ class ContractSeason:
     is_option_year: bool
     is_option_tendered: bool
     is_void_year: bool
-    base_salary: float
+    salary: float
     option_salary: float
     option_dead_cap: float
     void_dead_cap: float
@@ -254,7 +247,7 @@ class ContractSeason:
         year=None,
         is_option_year=None,
         is_void_year=None,
-        base_salary=None,
+        salary=None,
         option_salary=None,
         option_dead_cap=None,
         void_dead_cap=None,
@@ -262,13 +255,21 @@ class ContractSeason:
         self.year = year
         self.is_option_year = is_option_year
         self.is_void_year = is_void_year
-        self.base_salary = base_salary
+        self.salary = salary
         self.option_salary = option_salary
         self.option_dead_cap = option_dead_cap
         self.void_dead_cap = void_dead_cap
 
     def __str__(self):
-        pass
+        as_dict = self.to_dict()
+        headers = as_dict.keys()
+        rows = [as_dict.values()]
+        return tabulate.tabulate(rows, headers)
+
+    def __repr__(self) -> str:
+        return (
+            f"ContractSeason({self.year}: ${self.salary:.1f}M - {self.production} QBR)"
+        )
 
     def from_dict(self, dict) -> None:
         self.__init__(**dict)
@@ -277,9 +278,10 @@ class ContractSeason:
     def to_dict(self) -> dict:
         dt = {}
         dt["year"] = self.year
+        dt["prod"] = self.production
         dt["is_option_year"] = self.is_option_year
         dt["is_void_year"] = self.is_void_year
-        dt["base_salary"] = self.base_salary
+        dt["salary"] = self.salary
         dt["option_salary"] = self.option_salary
         dt["option_dead_cap"] = self.option_dead_cap
         dt["void_dead_cap"] = self.void_dead_cap
