@@ -1,5 +1,6 @@
 import pandas as pd
 from value import market_value as eval_market_value
+import tabulate
 
 
 class Contract:
@@ -8,7 +9,7 @@ class Contract:
     has_option_years: bool
     has_void_years: bool
 
-    is_option_tendered: bool
+    is_option_declined: bool = False
 
     option_years_tendered_value: float
     option_years_declined_value: float
@@ -70,7 +71,11 @@ class Contract:
         )
 
     def __str__(self):
-        pass
+        if not len(self.breakdown) > 0:
+            return
+        headers = self.breakdown[0].keys()
+        rows = [x.values() for x in self.breakdown]
+        return tabulate.tabulate(rows, headers)
 
     def option_years(self) -> list:
         return self.options.keys()
@@ -111,11 +116,121 @@ class Contract:
         df = pd.DataFrame().from_records(self.to_records())
         return df
 
-    def evaluate(self, productions: list):
-        pass
+    def set_productions(self, productions: list):
+        for contract_season, prod in zip(self.seasons, productions):
+            contract_season.production = prod
+        return
 
-    def handle_options(self):
-        pass
+    def evaluate(self, productions: list):
+        self.set_productions(productions)
+        for year, contract_season in self.__iter__():
+            # Get contract values
+            val_prod, inflation_adj = eval_market_value(
+                contract_season.production, year
+            )
+
+            # Set base values in season
+            contract_season.inflation_adj = inflation_adj
+            contract_season.market_salary = (
+                contract_season.market_salary
+                if contract_season.is_option_year and self.is_option_declined
+                else val_prod
+            )
+            contract_season.actual_salary = contract_season.base_salary
+
+            # Option handling - skip if option has already been declined
+            if contract_season.is_option_year and not self.is_option_declined:
+                # Get the value of the option
+                remaining_surplus_val = self.get_remaining_val(year)
+
+                # Option will be declined if it has negative value, else it will be tendered
+                if remaining_surplus_val < 0:
+                    self.decline_option_years(year)
+                else:
+                    # tender the option
+                    contract_season.actual_salary = contract_season.option_salary
+                    contract_season.is_option_tendered = True
+
+            # Void year handling
+            if contract_season.is_void_year:
+                contract_season.market_salary = 0.0
+                contract_season.actual_salary = contract_season.void_dead_cap
+
+            # Get surplus value of season
+            contract_season.surplus_value = (
+                contract_season.market_salary - contract_season.actual_salary
+            )
+
+            # Accumulate contract value
+            self.surplus_value += contract_season.surplus_value
+            self.market_value += contract_season.market_salary
+            self.total_value += contract_season.actual_salary
+
+            if year == 2030:
+                print(contract_season.market_salary)
+
+        # Generate Breakdown
+        self.generate_breakdown()
+
+        return self.surplus_value
+
+    def generate_breakdown(self):
+        breakdown = []
+        for contract_season in self.seasons:
+            # Format breakdown row
+            season_breakdown = {
+                "Season": contract_season.year,
+                "QBR": contract_season.production,
+                "Market Sal": contract_season.market_salary,
+                "Actual Sal": contract_season.base_salary,
+                "Inflation Adj": contract_season.inflation_adj,
+                "Tot. Surplus Value": contract_season.surplus_value,
+            }
+            if self.has_option_years:
+                season_breakdown["Option Sal"] = (
+                    contract_season.option_salary
+                    if contract_season.is_option_year
+                    else "--"
+                )
+            if self.has_void_years:
+                season_breakdown["Void Sal"] = (
+                    contract_season.void_dead_cap
+                    if contract_season.is_void_year
+                    else "--"
+                )
+
+            # Append breakdown row
+            breakdown.append(season_breakdown)
+
+        # Set as property
+        self.breakdown = breakdown
+
+    def get_remaining_val(self, start_year: int):
+        remaining_val = 0.0
+        for year, contract_season in self.__iter__():
+            if year < start_year:
+                continue
+            if contract_season.is_void_year:
+                remaining_val -= contract_season.void_dead_cap
+            else:
+                market_val, _ = eval_market_value(contract_season.production, year)
+                remaining_val += market_val - contract_season.option_salary
+        return remaining_val
+
+    def decline_option_years(self, start_year: int):
+        self.is_option_declined = True
+        for year, contract_season in self.__iter__():
+            if year < start_year:
+                continue
+            contract_season.is_option_tendered = False
+            contract_season.actual_salary = (
+                contract_season.void_dead_cap
+                if contract_season.is_void_year
+                else contract_season.option_dead_cap
+            )
+            contract_season.production = 0
+            contract_season.market_salary = 0.0
+        return
 
 
 class ContractSeason:
@@ -123,12 +238,15 @@ class ContractSeason:
     is_option_year: bool
     is_option_tendered: bool
     is_void_year: bool
-    base_salary: bool
+    base_salary: float
     option_salary: float
     option_dead_cap: float
     void_dead_cap: float
 
+    production: int
+    inflation_adj: float
     market_salary: float
+    actual_salary: float
     surplus_value: float = 0.0
 
     def __init__(
