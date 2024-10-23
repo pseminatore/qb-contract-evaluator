@@ -1,4 +1,4 @@
-from contract import Contract
+from contract import Contract, ContractEvaluation
 from utils import production_curve_lawrence
 
 
@@ -65,6 +65,8 @@ def lawrence_contract():
 if __name__ == "__main__":
     ct = lawrence_contract()
     prods = production_curve_lawrence()
-    ct.evaluate(prods)
-    season = ct[0]
+    eval_ct = ContractEvaluation(ct, prods)
+    print(ct)
+    print(eval_ct)
+    season = eval_ct[0]
     print(season)

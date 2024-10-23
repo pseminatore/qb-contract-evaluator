@@ -6,17 +6,10 @@ import tabulate
 class Contract:
     seasons: list = []
 
-    has_option_years: bool
-    has_void_years: bool
+    has_option_years: bool = False
+    has_void_years: bool = False
 
-    is_option_declined: bool = False
-
-    option_years_tendered_value: float
-    option_years_declined_value: float
-
-    surplus_value: float = 0.0
-    total_value: float = 0.0
-    market_value: float = 0.0
+    total_value: float = None
 
     breakdown: list = None
 
@@ -43,6 +36,7 @@ class Contract:
                 option_salary = option_salaries[option_ix]
                 option_dead_cap = option_dead_caps[option_ix]
                 option_ix += 1
+                self.has_option_years = True
             else:
                 option_salary = None
                 option_dead_cap = None
@@ -50,6 +44,7 @@ class Contract:
             if is_void_year:
                 void_dead_cap = void_year_dead_caps[void_ix]
                 void_ix += 1
+                self.has_void_years = True
             else:
                 void_dead_cap = None
 
@@ -64,6 +59,7 @@ class Contract:
             )
             self.seasons.append(contract_season)
         self.sort()
+        self.set_total_value()
 
     def __iter__(self):
         return (
@@ -71,7 +67,7 @@ class Contract:
         )
 
     def __str__(self):
-        if len(self.breakdown) == 0:
+        if not self.breakdown:
             self.generate_breakdown()
         headers = self.breakdown[0].keys()
         rows = [x.values() for x in self.breakdown]
@@ -80,6 +76,8 @@ class Contract:
     def __repr__(self) -> str:
         start_year = self.seasons[0].year
         end_year = self.seasons[-1].year
+        if self.total_value:
+            return f"Contract({start_year}-{end_year}: ${self.total_value:.1f}M)"
         return f"Contract({start_year}-{end_year})"
 
     def __getitem__(self, ix):
@@ -100,6 +98,7 @@ class Contract:
 
             self.seasons.append(season_obj)
         self.sort()
+        self.set_total_value()
         return self
 
     def to_records(self) -> list:
@@ -112,13 +111,206 @@ class Contract:
         df = pd.DataFrame().from_records(self.to_records())
         return df
 
+    def generate_breakdown(self):
+        breakdown = []
+        for contract_season in self.seasons:
+            # Format breakdown row
+            season_breakdown = {
+                "Season": contract_season.year,
+                "Base Sal": contract_season.salary,
+            }
+            if self.has_option_years:
+                season_breakdown["Option Sal"] = (
+                    contract_season.option_salary
+                    if contract_season.is_option_year
+                    else "--"
+                )
+            if self.has_void_years:
+                season_breakdown["Void Sal"] = (
+                    contract_season.void_dead_cap
+                    if contract_season.is_void_year
+                    else "--"
+                )
+
+            # Append breakdown row
+            breakdown.append(season_breakdown)
+
+        # Set as property
+        self.breakdown = breakdown
+
+    def set_total_value(self):
+        total_value = 0.0
+        for contract_season in self.seasons:
+            if contract_season.is_void_year:
+                total_value += contract_season.void_dead_cap
+            elif contract_season.is_option_year:
+                total_value += contract_season.option_salary
+            else:
+                total_value += contract_season.salary
+        self.total_value = total_value
+        return
+
+
+class ContractSeason:
+    year: int
+    is_option_year: bool
+    is_option_tendered: bool
+    is_void_year: bool
+    salary: float
+    option_salary: float
+    option_dead_cap: float
+    void_dead_cap: float
+
+    production: int
+    inflation_adj: float
+    market_salary: float
+    actual_salary: float
+    surplus_value: float = 0.0
+
+    def __init__(
+        self,
+        year=None,
+        is_option_year=None,
+        is_void_year=None,
+        salary=None,
+        option_salary=None,
+        option_dead_cap=None,
+        void_dead_cap=None,
+    ) -> None:
+        self.year = year
+        self.is_option_year = is_option_year
+        self.is_void_year = is_void_year
+        self.salary = salary
+        self.option_salary = option_salary
+        self.option_dead_cap = option_dead_cap
+        self.void_dead_cap = void_dead_cap
+
+    def __str__(self):
+        as_dict = self.to_dict()
+        headers = as_dict.keys()
+        rows = [as_dict.values()]
+        return tabulate.tabulate(rows, headers)
+
+    def __repr__(self) -> str:
+        if self.production:
+            return f"ContractSeason({self.year}: ${self.salary:.1f}M - {self.production} QBR)"
+        return f"ContractSeason({self.year}: ${self.salary:.1f}M)"
+
+    def from_dict(self, dict) -> None:
+        self.__init__(**dict)
+        return self
+
+    def to_dict(self) -> dict:
+        dt = {}
+        dt["year"] = self.year
+        dt["prod"] = self.production
+        dt["is_option_year"] = self.is_option_year
+        dt["is_void_year"] = self.is_void_year
+        dt["salary"] = self.salary
+        dt["option_salary"] = self.option_salary
+        dt["option_dead_cap"] = self.option_dead_cap
+        dt["void_dead_cap"] = self.void_dead_cap
+        return dt
+
+
+class ContractEvaluation(Contract):
+    productions: list = []
+
+    is_option_declined: bool = False
+
+    option_years_tendered_value: float
+    option_years_declined_value: float
+
+    surplus_value: float = None
+    market_value: float = None
+
+    def __init__(self, contract: Contract = None, productions: list = []) -> None:
+        self.productions = productions
+        self.has_option_years = contract.has_option_years
+        self.has_void_years = contract.has_void_years
+        for ix, ((year, contract_season), production) in enumerate(
+            zip(contract, productions)
+        ):
+            contract_season.production = production
+            self.seasons[ix] = contract_season
+        return
+
+    def __repr__(self) -> str:
+        start_year = self.seasons[0].year
+        end_year = self.seasons[-1].year
+        if self.surplus_value:
+            return f"ContractEvaluation({start_year}-{end_year}: ${self.surplus_value:.1f}M)"
+        return f"ContractEvaluation({start_year}-{end_year})"
+
     def set_productions(self, productions: list):
         for contract_season, prod in zip(self.seasons, productions):
             contract_season.production = prod
         return
 
-    def evaluate(self, productions: list):
-        self.set_productions(productions)
+    def get_remaining_val(self, start_year: int):
+        remaining_val = 0.0
+        for year, contract_season in self.__iter__():
+            if year < start_year:
+                continue
+            if contract_season.is_void_year:
+                remaining_val -= contract_season.void_dead_cap
+            else:
+                market_val, _ = eval_market_value(contract_season.production, year)
+                remaining_val += market_val - contract_season.option_salary
+        return remaining_val
+
+    def decline_option_years(self, start_year: int):
+        self.is_option_declined = True
+        for year, contract_season in self.__iter__():
+            if year < start_year:
+                continue
+            contract_season.is_option_tendered = False
+            contract_season.actual_salary = (
+                contract_season.void_dead_cap
+                if contract_season.is_void_year
+                else contract_season.option_dead_cap
+            )
+            contract_season.production = 0
+            contract_season.market_salary = 0.0
+        return
+
+    def generate_breakdown(self):
+        if not self.market_value:
+            self.evaluate()
+        breakdown = []
+        for contract_season in self.seasons:
+            # Format breakdown row
+            season_breakdown = {
+                "Season": contract_season.year,
+                "QBR": contract_season.production,
+                "Market Sal": contract_season.market_salary,
+                "Actual Sal": contract_season.salary,
+                "Inflation Adj": contract_season.inflation_adj,
+                "Tot. Surplus Value": contract_season.surplus_value,
+            }
+            if self.has_option_years:
+                season_breakdown["Option Sal"] = (
+                    contract_season.option_salary
+                    if contract_season.is_option_year
+                    else "--"
+                )
+            if self.has_void_years:
+                season_breakdown["Void Sal"] = (
+                    contract_season.void_dead_cap
+                    if contract_season.is_void_year
+                    else "--"
+                )
+
+            # Append breakdown row
+            breakdown.append(season_breakdown)
+
+        # Set as property
+        self.breakdown = breakdown
+
+    def evaluate(self):
+        # Reset value sums in case productions have changed
+        self.reset_values()
+
         for year, contract_season in self.__iter__():
             # Get contract values
             val_prod, inflation_adj = eval_market_value(
@@ -167,122 +359,7 @@ class Contract:
 
         return self.surplus_value
 
-    def generate_breakdown(self):
-        breakdown = []
-        for contract_season in self.seasons:
-            # Format breakdown row
-            season_breakdown = {
-                "Season": contract_season.year,
-                "QBR": contract_season.production,
-                "Market Sal": contract_season.market_salary,
-                "Actual Sal": contract_season.salary,
-                "Inflation Adj": contract_season.inflation_adj,
-                "Tot. Surplus Value": contract_season.surplus_value,
-            }
-            if self.has_option_years:
-                season_breakdown["Option Sal"] = (
-                    contract_season.option_salary
-                    if contract_season.is_option_year
-                    else "--"
-                )
-            if self.has_void_years:
-                season_breakdown["Void Sal"] = (
-                    contract_season.void_dead_cap
-                    if contract_season.is_void_year
-                    else "--"
-                )
-
-            # Append breakdown row
-            breakdown.append(season_breakdown)
-
-        # Set as property
-        self.breakdown = breakdown
-
-    def get_remaining_val(self, start_year: int):
-        remaining_val = 0.0
-        for year, contract_season in self.__iter__():
-            if year < start_year:
-                continue
-            if contract_season.is_void_year:
-                remaining_val -= contract_season.void_dead_cap
-            else:
-                market_val, _ = eval_market_value(contract_season.production, year)
-                remaining_val += market_val - contract_season.option_salary
-        return remaining_val
-
-    def decline_option_years(self, start_year: int):
-        self.is_option_declined = True
-        for year, contract_season in self.__iter__():
-            if year < start_year:
-                continue
-            contract_season.is_option_tendered = False
-            contract_season.actual_salary = (
-                contract_season.void_dead_cap
-                if contract_season.is_void_year
-                else contract_season.option_dead_cap
-            )
-            contract_season.production = 0
-            contract_season.market_salary = 0.0
-        return
-
-
-class ContractSeason:
-    year: int
-    is_option_year: bool
-    is_option_tendered: bool
-    is_void_year: bool
-    salary: float
-    option_salary: float
-    option_dead_cap: float
-    void_dead_cap: float
-
-    production: int
-    inflation_adj: float
-    market_salary: float
-    actual_salary: float
-    surplus_value: float = 0.0
-
-    def __init__(
-        self,
-        year=None,
-        is_option_year=None,
-        is_void_year=None,
-        salary=None,
-        option_salary=None,
-        option_dead_cap=None,
-        void_dead_cap=None,
-    ) -> None:
-        self.year = year
-        self.is_option_year = is_option_year
-        self.is_void_year = is_void_year
-        self.salary = salary
-        self.option_salary = option_salary
-        self.option_dead_cap = option_dead_cap
-        self.void_dead_cap = void_dead_cap
-
-    def __str__(self):
-        as_dict = self.to_dict()
-        headers = as_dict.keys()
-        rows = [as_dict.values()]
-        return tabulate.tabulate(rows, headers)
-
-    def __repr__(self) -> str:
-        return (
-            f"ContractSeason({self.year}: ${self.salary:.1f}M - {self.production} QBR)"
-        )
-
-    def from_dict(self, dict) -> None:
-        self.__init__(**dict)
-        return self
-
-    def to_dict(self) -> dict:
-        dt = {}
-        dt["year"] = self.year
-        dt["prod"] = self.production
-        dt["is_option_year"] = self.is_option_year
-        dt["is_void_year"] = self.is_void_year
-        dt["salary"] = self.salary
-        dt["option_salary"] = self.option_salary
-        dt["option_dead_cap"] = self.option_dead_cap
-        dt["void_dead_cap"] = self.void_dead_cap
-        return dt
+    def reset_values(self):
+        self.market_value = 0.0
+        self.surplus_value = 0.0
+        self.total_value = 0.0
