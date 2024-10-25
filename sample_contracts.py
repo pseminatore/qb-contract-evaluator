@@ -65,7 +65,8 @@ def lawrence_contract():
 if __name__ == "__main__":
     ct = lawrence_contract()
     prods = production_curve_lawrence()
-    eval_ct = ContractEvaluation(ct, prods)
+    eval_ct = ContractEvaluation(ct, prods, "Trevor Lawrence")
+    eval_ct.build_surplus_value_graphic()
     print(ct)
     print(eval_ct)
     season = eval_ct[0]

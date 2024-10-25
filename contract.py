@@ -1,6 +1,9 @@
 import pandas as pd
 from value import market_value as eval_market_value
 import tabulate
+import plotly.graph_objects as go
+import plotly.colors as colors
+import os
 
 
 class Contract:
@@ -176,6 +179,11 @@ class ContractSeason:
         option_salary=None,
         option_dead_cap=None,
         void_dead_cap=None,
+        production=None,
+        inflation_adj=None,
+        market_salary=None,
+        actual_salary=None,
+        surplus_value=0.0,
     ) -> None:
         self.year = year
         self.is_option_year = is_option_year
@@ -184,6 +192,11 @@ class ContractSeason:
         self.option_salary = option_salary
         self.option_dead_cap = option_dead_cap
         self.void_dead_cap = void_dead_cap
+        self.production = production
+        self.inflation_adj = inflation_adj
+        self.market_salary = market_salary
+        self.actual_salary = actual_salary
+        self.surplus_value = surplus_value
 
     def __str__(self):
         as_dict = self.to_dict()
@@ -192,7 +205,7 @@ class ContractSeason:
         return tabulate.tabulate(rows, headers)
 
     def __repr__(self) -> str:
-        if self.production:
+        if self.production is not None:
             return f"ContractSeason({self.year}: ${self.salary:.1f}M - {self.production} QBR)"
         return f"ContractSeason({self.year}: ${self.salary:.1f}M)"
 
@@ -202,14 +215,26 @@ class ContractSeason:
 
     def to_dict(self) -> dict:
         dt = {}
+        # Standard properties
         dt["year"] = self.year
-        dt["prod"] = self.production
         dt["is_option_year"] = self.is_option_year
         dt["is_void_year"] = self.is_void_year
         dt["salary"] = self.salary
         dt["option_salary"] = self.option_salary
         dt["option_dead_cap"] = self.option_dead_cap
         dt["void_dead_cap"] = self.void_dead_cap
+
+        # Optional properties
+        if self.production is not None:
+            dt["prod"] = self.production
+        if self.inflation_adj is not None:
+            dt["inflation_adj"] = self.inflation_adj
+        if self.market_salary is not None:
+            dt["market_salary"] = self.market_salary
+        if self.actual_salary is not None:
+            dt["actual_salary"] = self.actual_salary
+        if self.surplus_value is not None:
+            dt["surplus_value"] = self.surplus_value
         return dt
 
 
@@ -223,12 +248,16 @@ class ContractEvaluation(Contract):
 
     surplus_value: float = None
     market_value: float = None
+    player_name: str = None
 
-    def __init__(self, contract: Contract = None, productions: list = []) -> None:
+    def __init__(
+        self, contract: Contract = None, productions: list = [], player_name: str = None
+    ) -> None:
         self.productions = productions
         self.has_option_years = contract.has_option_years
         self.has_void_years = contract.has_void_years
-        for ix, ((year, contract_season), production) in enumerate(
+        self.player_name = player_name
+        for ix, ((_, contract_season), production) in enumerate(
             zip(contract, productions)
         ):
             contract_season.production = production
@@ -238,7 +267,7 @@ class ContractEvaluation(Contract):
     def __repr__(self) -> str:
         start_year = self.seasons[0].year
         end_year = self.seasons[-1].year
-        if self.surplus_value:
+        if self.surplus_value is not None:
             return f"ContractEvaluation({start_year}-{end_year}: ${self.surplus_value:.1f}M)"
         return f"ContractEvaluation({start_year}-{end_year})"
 
@@ -284,7 +313,7 @@ class ContractEvaluation(Contract):
                 "Season": contract_season.year,
                 "QBR": contract_season.production,
                 "Market Sal": contract_season.market_salary,
-                "Actual Sal": contract_season.salary,
+                "Actual Sal": contract_season.actual_salary,
                 "Inflation Adj": contract_season.inflation_adj,
                 "Tot. Surplus Value": contract_season.surplus_value,
             }
@@ -363,3 +392,179 @@ class ContractEvaluation(Contract):
         self.market_value = 0.0
         self.surplus_value = 0.0
         self.total_value = 0.0
+
+    def build_surplus_value_graphic(self, save_show=False):
+        if not self.breakdown:
+            self.generate_breakdown()
+        fig = go.Figure()
+        leaderboard = self.to_df()
+        leaderboard.rename(
+            columns={
+                "year": "Season",
+                "prod": "Proj. QBR",
+                "market_salary": "Market Sal. ($M)",
+                "actual_salary": "Actual Sal. ($M)",
+                "inflation_adj": "Inflation Adj",
+                "surplus_value": "Surplus Val ($M)",
+            },
+            inplace=True,
+        )
+        header_cols = [
+            "Season",
+            "Proj. QBR",
+            "Market Sal. ($M)",
+            "Actual Sal. ($M)",
+            "Inflation Adj",
+            "Surplus Val ($M)",
+        ]
+        normalized_colorpoints = (leaderboard["Surplus Val ($M)"] + 70) / 140
+        colors_arr = colors.sample_colorscale(
+            "RdBu_r", normalized_colorpoints, low=0, high=1.0
+        )
+        leaderboard["border_color"] = [
+            (
+                "rgb(217, 173, 28)"
+                if (self.has_void_years) and szn.is_void_year
+                else (
+                    "rgb(40, 161, 66)"
+                    if self.has_option_years
+                    and szn.is_option_year
+                    and szn.is_option_tendered
+                    else (
+                        "rgb(201, 43, 28)"
+                        if self.has_option_years
+                        and szn.is_option_year
+                        and not szn.is_option_tendered
+                        else "grey"
+                    )
+                )
+            )
+            for _, szn in self.__iter__()
+        ]
+        leaderboard["border_size"] = [
+            (5 if szn.is_option_year or szn.is_void_year else 1)
+            for _, szn in self.__iter__()
+        ]
+        fill_colors = ["rgb(237,237,237)" for _ in range(len(header_cols) - 1)] + [
+            colors_arr
+        ]
+        line_widths = []
+        for _ in header_cols:
+            for _, season in self.__iter__():
+                width = (
+                    5
+                    if (self.has_option_years and season.is_option_year)
+                    or (self.has_void_years and season.is_void_year)
+                    else 1
+                )
+                line_widths.append(width)
+
+        title = f"Surplus Value Breakdown"
+        surplus_value_str = f"Contract Surplus Value: "
+        surplus_value_amount = f"${self.surplus_value:.01f}"
+        surplus_value_str_color = (
+            "rgb(50, 168, 60)" if self.surplus_value > 0 else "rgb(168, 50, 60)"
+        )
+        fig.add_annotation(
+            xref="x domain",
+            yref="paper",
+            x=0.5,
+            y=1.025,
+            showarrow=False,
+            text=title,
+            font=dict(size=42),
+        )
+        fig.add_annotation(
+            xref="x domain",
+            yref="paper",
+            x=0.5,
+            y=0.9975,
+            showarrow=False,
+            text=self.player_name,
+            font=dict(size=38),
+        )
+        fig.add_annotation(
+            xref="x domain",
+            yref="paper",
+            x=0.4,
+            y=0.975,
+            showarrow=False,
+            text=surplus_value_str,
+            font=dict(size=38),
+        )
+        fig.add_annotation(
+            xref="x domain",
+            yref="paper",
+            x=0.785,
+            y=0.975,
+            showarrow=False,
+            text=surplus_value_amount,
+            font=dict(size=38, color=surplus_value_str_color),
+        )
+        fig.add_annotation(
+            xref="x domain",
+            yref="y domain",
+            x=0.05,
+            y=0.58,
+            showarrow=False,
+            text="Green: Tendered Option Year",
+            font=dict(size=24, color="rgb(40, 161, 66)"),
+        )
+        fig.add_annotation(
+            xref="x domain",
+            yref="y domain",
+            x=0.05,
+            y=0.56,
+            showarrow=False,
+            text="Red: Declined Option Year",
+            font=dict(size=24, color="rgb(201, 43, 28)"),
+        )
+        fig.add_annotation(
+            xref="x domain",
+            yref="y domain",
+            x=0.05,
+            y=0.54,
+            showarrow=False,
+            text="Yellow: Void Year",
+            font=dict(size=24, color="rgb(217, 173, 28)"),
+        )
+        fig.add_trace(
+            go.Table(
+                header=dict(
+                    values=header_cols,
+                    height=56,
+                    font=dict(size=35),
+                    line_width=3,
+                    line_color="grey",
+                ),
+                cells=dict(
+                    values=[
+                        leaderboard["Season"],
+                        leaderboard["Proj. QBR"],
+                        round(leaderboard["Market Sal. ($M)"], 1),
+                        round(leaderboard["Actual Sal. ($M)"], 1),
+                        round(leaderboard["Inflation Adj"], 3),
+                        round(leaderboard["Surplus Val ($M)"], 1),
+                    ],
+                    height=55,
+                    font=dict(size=38),
+                    fill_color=fill_colors,
+                    line_color=[leaderboard["border_color"]],
+                    line_width=5,
+                    prefix=["", "", "$", "$", "", "$"],
+                ),
+                domain=dict(y=[0, 0.92]),
+            )
+        )
+        fig.update_layout(
+            width=1080,
+            height=2000,
+            template="ggplot2",
+        )
+        if save_show:
+            fig.show()
+        else:
+            if not os.path.exists(f"outputs/contract_breakdowns"):
+                os.mkdir(f"outputs/contract_breakdowns")
+            fig.write_image(f"outputs/contract_breakdowns/{self.player_name}.png")
+        return
