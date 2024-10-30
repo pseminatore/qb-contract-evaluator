@@ -171,11 +171,13 @@ print(eval_ct)
 ```
 
 **Generating a ContractEvaluation breakdown graphic**
+
 `ContractEvaluations` can generate a PNG representation of the contract value using Plotly[insert link].  By default, these images are saved to a `./outputs/contract_breakdowns/` folder.  However, there is an option to display the image in the browser instead.
 
 ```python
 eval_ct.build_surplus_value_graphic()
 ```
+![breakdownImage](./outputs/contract_breakdowns/Trevor%20Lawrence.png)
 
 To display in the browser, set the `save_show` flag to `True`
 ```python
@@ -183,7 +185,7 @@ eval_ct.build_surplus_value_graphic(save_show=True)
 ```
 ## Recognition
 
-The financial data behind all of these evaluations comes via [Spotrac](https://www.spotrac.com/) and [OverTheCap](https://overthecap.com/).  QBR comes from [ESPN](https://www.espn.com/)
+The raw financial data behind all of these evaluations comes via [Spotrac](https://www.spotrac.com/) and [OverTheCap](https://overthecap.com/).  QBR comes from [ESPN](https://www.espn.com/)
 
 ## Contributing
 
