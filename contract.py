@@ -153,6 +153,9 @@ class Contract:
         self.total_value = total_value
         return
 
+    def get_total_value(self):
+        return self.total_value
+
 
 class ContractSeason:
     year: int
@@ -336,7 +339,7 @@ class ContractEvaluation(Contract):
         # Set as property
         self.breakdown = breakdown
 
-    def evaluate(self):
+    def evaluate(self) -> float:
         # Reset value sums in case productions have changed
         self.reset_values()
 
@@ -403,7 +406,7 @@ class ContractEvaluation(Contract):
                 "year": "Season",
                 "prod": "Proj. QBR",
                 "market_salary": "Market Sal. ($M)",
-                "actual_salary": "Actual Sal. ($M)",
+                "actual_salary": "Cap Hit ($M)",
                 "inflation_adj": "Inflation Adj",
                 "surplus_value": "Surplus Val ($M)",
             },
@@ -413,7 +416,7 @@ class ContractEvaluation(Contract):
             "Season",
             "Proj. QBR",
             "Market Sal. ($M)",
-            "Actual Sal. ($M)",
+            "Cap Hit ($M)",
             "Inflation Adj",
             "Surplus Val ($M)",
         ]
@@ -507,7 +510,7 @@ class ContractEvaluation(Contract):
             x=0.05,
             y=0.58,
             showarrow=False,
-            text="Green: Tendered Option Year",
+            text="Green: Option Year (Proj. Tendered)",
             font=dict(size=24, color="rgb(40, 161, 66)"),
         )
         fig.add_annotation(
@@ -516,7 +519,7 @@ class ContractEvaluation(Contract):
             x=0.05,
             y=0.56,
             showarrow=False,
-            text="Red: Declined Option Year",
+            text="Red: Option Year (Proj. Declined)",
             font=dict(size=24, color="rgb(201, 43, 28)"),
         )
         fig.add_annotation(
@@ -542,7 +545,7 @@ class ContractEvaluation(Contract):
                         leaderboard["Season"],
                         leaderboard["Proj. QBR"],
                         round(leaderboard["Market Sal. ($M)"], 1),
-                        round(leaderboard["Actual Sal. ($M)"], 1),
+                        round(leaderboard["Cap Hit ($M)"], 1),
                         round(leaderboard["Inflation Adj"], 3),
                         round(leaderboard["Surplus Val ($M)"], 1),
                     ],

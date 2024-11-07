@@ -1,5 +1,17 @@
 from contract import Contract, ContractEvaluation
 from utils import production_curve_lawrence
+from compare import find_breakeven_point
+
+
+def prescott_contract():
+    ct = Contract(
+        start_year=2024,
+        end_year=2028,
+        salaries=[43.4, 89.9, 68.0, 62.0, 0.0],
+        option_year=2028,
+        option_salaries=[72.0],
+        option_dead_caps=34.0,
+    )
 
 
 def lawrence_contract():
@@ -64,10 +76,13 @@ def lawrence_contract():
 
 if __name__ == "__main__":
     ct = lawrence_contract()
+    val = find_breakeven_point(ct)
+    # print(ct)
     prods = production_curve_lawrence()
     eval_ct = ContractEvaluation(ct, prods, "Trevor Lawrence")
+    print(eval_ct)
     eval_ct.build_surplus_value_graphic()
     print(ct)
-    print(eval_ct)
+
     season = eval_ct[0]
     print(season)
