@@ -7,14 +7,6 @@ import os
 
 
 class Contract:
-    seasons: list = []
-
-    has_option_years: bool = False
-    has_void_years: bool = False
-
-    total_value: float = None
-
-    breakdown: list = None
 
     def __init__(
         self,
@@ -27,8 +19,14 @@ class Contract:
         void_year: int = None,
         void_year_dead_caps: list = [],
     ) -> None:
-        if start_year is None or end_year is None:
-            return
+        # if start_year is None or end_year is None:
+        #     return
+
+        self.seasons: list = []
+        self.has_option_years: bool = False
+        self.has_void_years: bool = False
+        self.total_value: float = None
+        self.breakdown = None
         option_ix = 0
         void_ix = 0
         for ix, season in enumerate(range(start_year, end_year)):
@@ -242,16 +240,6 @@ class ContractSeason:
 
 
 class ContractEvaluation(Contract):
-    productions: list = []
-
-    is_option_declined: bool = False
-
-    option_years_tendered_value: float
-    option_years_declined_value: float
-
-    surplus_value: float = None
-    market_value: float = None
-    player_name: str = None
 
     def __init__(
         self, contract: Contract = None, productions: list = [], player_name: str = None
@@ -260,6 +248,13 @@ class ContractEvaluation(Contract):
         self.has_option_years = contract.has_option_years
         self.has_void_years = contract.has_void_years
         self.player_name = player_name
+        self.is_option_declined = False
+        self.option_years_tendered_value: float = None
+        self.option_years_declined_value: float = None
+        self.surplus_value: float = None
+        self.market_value: float = None
+        self.player_name: str = None
+
         for ix, ((_, contract_season), production) in enumerate(
             zip(contract, productions)
         ):
@@ -344,6 +339,7 @@ class ContractEvaluation(Contract):
         self.reset_values()
 
         for year, contract_season in self.__iter__():
+            print(contract_season, contract_season.production)
             # Get contract values
             val_prod, inflation_adj = eval_market_value(
                 contract_season.production, year
