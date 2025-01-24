@@ -31,8 +31,8 @@ class Contract:
         void_ix = 0
         for ix, season in enumerate(range(start_year, end_year)):
             salary = salaries[ix]
-            is_option_year = season >= option_year
-            is_void_year = season >= void_year
+            is_option_year = False if option_year is None else season >= option_year
+            is_void_year = False if void_year is None else season >= void_year
             if is_option_year:
                 option_salary = option_salaries[option_ix]
                 option_dead_cap = option_dead_caps[option_ix]

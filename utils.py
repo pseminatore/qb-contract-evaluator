@@ -69,6 +69,11 @@ def prescott_option_years():
     return options
 
 
+def production_curve_minshew():
+    prods = [40, 42, 0, 0]
+    return prods
+
+
 def salary_lawrence_actual(season):
     cap_salaries = {
         2024: 15.0,

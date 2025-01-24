@@ -14,6 +14,17 @@ def prescott_contract():
     )
 
 
+def minshew_contract():
+    ct = Contract(
+        start_year=2024,
+        end_year=2027,
+        salaries=[8.0, 14.0, 0.0, 0.0],
+        void_year=2026,
+        void_year_dead_caps=[3.0],
+    )
+    return ct
+
+
 def cousins_contract():
     ct = Contract()
 
