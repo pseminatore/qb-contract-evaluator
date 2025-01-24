@@ -218,15 +218,15 @@ class BasicAgingCurve:
         self._age_curve_model = self.load_model(self._coeff_filepath)
         return
 
-    def project_qbr(self, n_years: int) -> list:
-        projections = []
+    def project_qbr(self, n_years: int) -> dict:
+        projections = {}
         base_year_adj = self._age_curve_model(self._start_age - 1)
         for yr in range(n_years):
             age = self._start_age + yr
             year_adj = self._age_curve_model(age)
             year_adj_delta = year_adj - base_year_adj
             year_proj = self._baseline_qbr_proj + year_adj_delta
-            projections.append(year_proj)
+            projections[age] = year_proj
         return projections
 
     def load_model_coefficients(self, filepath="age_curve_coeff.json") -> np.array:
@@ -244,7 +244,7 @@ class BasicAgingCurve:
 
 def main():
 
-    start_age = 28
+    start_age = 32
     baseline_qbr_proj = 60.7
     years = 3
     aging_curve = BasicAgingCurve(start_age, baseline_qbr_proj)

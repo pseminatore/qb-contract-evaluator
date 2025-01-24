@@ -4,7 +4,7 @@ A python package for working with and evaluating NFL Quarterback contract value.
 
 
 
-## Usage
+## Contracts and ContractEvaluation
 
 ```python
 from qb_contract_evaluator import contract
@@ -151,6 +151,7 @@ surplus_value = eval_ct.evaluate()
 ```
 
 **Viewing a ContractEvaluation breakdown**
+
 Similar to a `Contract`, a string representation of a `ContractEvaluation` can be printed.  This function will also call `evaluate()` if it hasn't been evaluated already.
 
 ```python
@@ -183,6 +184,44 @@ To display in the browser, set the `save_show` flag to `True`
 ```python
 eval_ct.build_surplus_value_graphic(save_show=True)
 ```
+
+### QBR Projections
+
+As noted above, a `ContractEvaluation` requires a manual input of QB production in units of QBR.  This input is left intentionally arbitrary.  However, this package includes tools for projecting production by year to allow users to standardize these values.
+
+**Basic Aging Curves**
+
+```python
+from qb_contract_evaluator.projections import BasicAgingCurve
+```
+
+This projection method involves taking a single value representing the Baseline QBR value for a QB, and regressing it across a standard curve based on the age of the player.  This Baseline value can be a players career average QBR, an adjusted or expected QBR based on some sort of model, or even just the players most recent full-season QBR. It is intentionally vague to allow the user to experiment or implement further.  The curve is implemented via the Delta Method, explained [here](https://tangotiger.net/aging.html).  
+
+To create an aging curve:
+
+```python
+    ## The age of the QB going into the first season you wish to project
+    start_age = 32
+
+    ## The Baseline QBR projection - this is the base number that will be regressed
+    baseline_qbr_proj = 60.7
+
+    aging_curve = BasicAgingCurve(start_age, baseline_qbr_proj)
+```
+
+Once the curve is created, call the `project_qbr()` method, passing the duration of the projection as the `n_years` parameter to get the projected QBR by QB age.  
+
+```python
+    ## The duration of the projection
+    n_years = 3
+
+    qbr_projections = aging_curve.project_qbr(n_years)
+    print(qbr_projections)
+```
+```python
+    >>> {32: 59.54786013890471, 33: 57.99906500162463, 34: 56.0052286796094}
+```
+
 ## Recognition
 
 The raw financial data behind all of these evaluations comes via [Spotrac](https://www.spotrac.com/) and [OverTheCap](https://overthecap.com/).  QBR comes from [ESPN](https://www.espn.com/)
