@@ -242,7 +242,128 @@ class BasicAgingCurve:
         return model_func
 
 
+def mean_production_before_year(row, qbr_data):
+    player_qbrs = qbr_data[qbr_data["player_id"] == row["espn_id"]]
+    prior_years_qbrs = player_qbrs[player_qbrs["season"] < row["year_signed"]]
+    if not prior_years_qbrs.empty:
+        return prior_years_qbrs["qbr_total"].mean()
+    return None
+
+
+def max_production_before_year(row, qbr_data):
+    player_qbrs = qbr_data[qbr_data["player_id"] == row["espn_id"]]
+    prior_years_qbrs = player_qbrs[player_qbrs["season"] < row["year_signed"]]
+    if not prior_years_qbrs.empty:
+        return prior_years_qbrs["qbr_total"].max()
+    return None
+
+
+def recent_production_before_year(row, qbr_data):
+    player_qbrs = qbr_data[qbr_data["player_id"] == row["espn_id"]]
+    prior_years_qbrs = player_qbrs[player_qbrs["season"] == row["prev_year_signed"]]
+    if not prior_years_qbrs.empty:
+        return prior_years_qbrs["qbr_total"][
+            prior_years_qbrs["qbr_total"].first_valid_index()
+        ]
+    return None
+
+
+def build_contract_length_df(
+    start_season: int = 2006, end_season: int = 2023
+) -> pd.DataFrame:
+    ## TODO --
+    # features: age, avg QBR, GS, wins, peak QBR, last season qbr, draft position
+    # target: years, years_guaranteed
+    # Set season range
+    season_range = [szn for szn in range(start_season, end_season + 1)]
+
+    # Get players and contract data
+    contract_data = nfl.import_contracts()
+    contract_data = contract_data[contract_data["position"] == "QB"]
+    contract_data = contract_data[contract_data["year_signed"] >= start_season]
+    contract_data = contract_data[contract_data["year_signed"] <= end_season]
+    contract_data["prev_year_signed"] = contract_data["year_signed"] - 1
+    contract_data["pct_guaranteed"] = contract_data["guaranteed"].astype(
+        float
+    ) / contract_data["value"].astype(float)
+    contract_data["years_guaranteed"] = (
+        contract_data["years"] * contract_data["pct_guaranteed"]
+    )
+    contract_data = contract_data[
+        [
+            "player",
+            "gsis_id",
+            "team",
+            "year_signed",
+            "prev_year_signed",
+            "years",
+            "years_guaranteed",
+            "value",
+            "pct_guaranteed",
+            "draft_overall",
+        ]
+    ]
+    contract_data.dropna(subset=["gsis_id"], inplace=True)
+
+    # Get full ID set for players
+    player_ids = nfl.import_ids()
+    player_ids = player_ids[player_ids["position"] == "QB"]
+    player_ids = player_ids[["gsis_id", "birthdate", "espn_id"]]
+    contract_data = pd.merge(
+        contract_data, player_ids, how="inner", left_on="gsis_id", right_on="gsis_id"
+    )
+    contract_data.dropna(subset=["espn_id"], inplace=True)
+
+    ## TODO - for debugging only
+    duplicated = contract_data.loc[
+        contract_data.duplicated(subset=["player", "team", "year_signed", "value"])
+    ]
+
+    # Get QBR Data
+    qbr_data = nfl.import_qbr(years=season_range)
+    qbr_data = qbr_data[qbr_data["season_type"] == "Regular"]
+    qbr_data.dropna(subset=["player_id"], inplace=True)
+    qbr_data = qbr_data[["season", "player_id", "qbr_total"]]
+    contract_data["max_production_before_signing"] = contract_data.apply(
+        max_production_before_year, axis=1, qbr_data=qbr_data
+    )
+    contract_data["mean_production_before_signing"] = contract_data.apply(
+        mean_production_before_year, axis=1, qbr_data=qbr_data
+    )
+    contract_data["recent_production_before_signing"] = contract_data.apply(
+        recent_production_before_year, axis=1, qbr_data=qbr_data
+    )
+
+    # Get age on 09/01 of each season
+    contract_data["season_start"] = contract_data["year_signed"].apply(
+        lambda szn: f"{szn}-09-01"
+    )
+    contract_data["season_start_dt"] = pd.to_datetime(contract_data["season_start"])
+    contract_data["birthdate_dt"] = pd.to_datetime(contract_data["birthdate"])
+    contract_data["age_season_start"] = (
+        contract_data["season_start_dt"].dt.year - contract_data["birthdate_dt"].dt.year
+    )
+    contract_data = contract_data[
+        [
+            col
+            for col in contract_data.columns
+            if col not in ["season_start", "season_start_dt", "birthdate_dt"]
+        ]
+    ]
+
+    # Fill UDFA with pick 300, slightly but noticeably later than other players
+    contract_data.fillna({"draft_overall": 300}, inplace=True)
+
+    return contract_data
+
+
+def build_model(contract_data):
+    pass
+
+
 def main():
+
+    contract_data = build_contract_length_df()
 
     start_age = 32
     baseline_qbr_proj = 60.7
