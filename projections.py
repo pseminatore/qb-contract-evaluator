@@ -4,6 +4,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
 import json
+from sklearn.multioutput import MultiOutputRegressor
+from sklearn.neighbors import KNeighborsRegressor
+from xgboost import XGBRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
 
 
 class BasicAgingCurveBuilder:
@@ -271,9 +276,11 @@ def recent_production_before_year(row, qbr_data):
 def build_contract_length_df(
     start_season: int = 2006, end_season: int = 2023
 ) -> pd.DataFrame:
-    ## TODO --
-    # features: age, avg QBR, GS, wins, peak QBR, last season qbr, draft position
-    # target: years, years_guaranteed
+    """
+    features: age, avg QBR, GS, wins?, peak QBR, last season qbr, draft position
+    target: years, years_guaranteed
+    """
+
     # Set season range
     season_range = [szn for szn in range(start_season, end_season + 1)]
 
@@ -314,11 +321,6 @@ def build_contract_length_df(
     )
     contract_data.dropna(subset=["espn_id"], inplace=True)
 
-    ## TODO - for debugging only
-    duplicated = contract_data.loc[
-        contract_data.duplicated(subset=["player", "team", "year_signed", "value"])
-    ]
-
     # Get QBR Data
     qbr_data = nfl.import_qbr(years=season_range)
     qbr_data = qbr_data[qbr_data["season_type"] == "Regular"]
@@ -333,6 +335,21 @@ def build_contract_length_df(
     contract_data["recent_production_before_signing"] = contract_data.apply(
         recent_production_before_year, axis=1, qbr_data=qbr_data
     )
+    first_contracts = contract_data.loc[
+        contract_data["mean_production_before_signing"].isna()
+    ]
+    contract_data.dropna(subset=["max_production_before_signing"], inplace=True)
+    contract_data.fillna(
+        {
+            "recent_production_before_signing": 0,
+            "max_production_before_signing": 0,
+            "mean_production_before_signing": 0,
+        },
+        inplace=True,
+    )
+
+    # Get career wins
+    career_stats = nfl.import_seasonal_pfr(s_type="pass", years=[2023])
 
     # Get age on 09/01 of each season
     contract_data["season_start"] = contract_data["year_signed"].apply(
@@ -354,16 +371,128 @@ def build_contract_length_df(
     # Fill UDFA with pick 300, slightly but noticeably later than other players
     contract_data.fillna({"draft_overall": 300}, inplace=True)
 
+    contract_data.to_csv("contract_data_training_set.csv", index=False)
+
     return contract_data
 
 
-def build_model(contract_data):
-    pass
+def scale_data(contract_data: pd.DataFrame, features: list, targets: list) -> tuple:
+    X = contract_data[features]
+    scaler = MinMaxScaler()
+    X_scaled = scaler.fit_transform(X)
+    X_scaled_dict = {}
+    for ix, colname in enumerate(features):
+        X_scaled_dict[colname] = X_scaled[:, ix]
+    X_scaled_df = pd.DataFrame(X_scaled_dict)
+    y = contract_data[targets]
+    return X_scaled_df, y, scaler
+
+
+def unscale_data(
+    scaled_data: pd.DataFrame, features: list, scaler: MinMaxScaler
+) -> pd.DataFrame:
+    scaled_data.reset_index(inplace=True)
+    index = scaled_data["index"]
+    scaled_data = scaled_data[features]
+    scaled_data_arr = scaled_data.to_numpy()
+    unscaled_data_arr = scaler.inverse_transform(scaled_data_arr)
+    unscaled_data_dict = {}
+    for ix, colname in enumerate(features):
+        unscaled_data_dict[colname] = unscaled_data_arr[:, ix]
+    unscaled_data_df = pd.DataFrame(unscaled_data_dict)
+    unscaled_data_df["index"] = index
+    unscaled_data_df.set_index("index", inplace=True)
+    return unscaled_data_df
+
+
+def predict_individual_contract(
+    ct: np.ndarray, model: MultiOutputRegressor, scaler: MinMaxScaler, name: str
+) -> None:
+    scaled_ct = scaler.transform(ct)
+    pred_ct = model.predict(scaled_ct)
+    print(
+        f"Projected {name} Contract: {pred_ct[0][0]:.01f} years, {pred_ct[0][1]:.02f} gtd"
+    )
+    return
+
+
+def format_test_df(
+    contract_data: pd.DataFrame, X_test: pd.DataFrame, y_pred: pd.DataFrame
+) -> pd.DataFrame:
+    X_test["row_num"] = range(len(X_test))
+    test_output = pd.merge(X_test, y_pred, left_on="row_num", right_index=True)
+    test_output = pd.merge(
+        contract_data[["player", "year_signed"]],
+        test_output,
+        how="inner",
+        left_index=True,
+        right_index=True,
+    )
+    test_output = test_output[[col for col in test_output.columns if col != "row_num"]]
+    test_output["pct_guaranteed"] = (
+        test_output["years_guaranteed"] / test_output["years"]
+    )
+    return test_output
+
+
+def score_model(
+    model: MultiOutputRegressor, X_test: pd.DataFrame, y_test: pd.DataFrame
+) -> float:
+    score = model.score(X_test, y_test)
+    print(f"r2: {score:.02f}")
+    return score
+
+
+def predict_df(
+    X: pd.DataFrame, targets: list, model: MultiOutputRegressor
+) -> pd.DataFrame:
+    y_pred = model.predict(X)
+    y_pred_dict = {}
+    for ix, colname in enumerate(targets):
+        y_pred_dict[colname] = y_pred[:, ix]
+    unscaled_data_df = pd.DataFrame(y_pred_dict)
+    return unscaled_data_df
+
+
+def build_model(contract_data: pd.DataFrame):
+    targets = ["years", "years_guaranteed"]
+    features = [
+        "age_season_start",
+        "draft_overall",
+        "max_production_before_signing",
+        "mean_production_before_signing",
+        "recent_production_before_signing",
+    ]
+
+    X, y, scaler = scale_data(contract_data, features, targets)
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.15, random_state=42
+    )
+    model = MultiOutputRegressor(
+        KNeighborsRegressor(n_neighbors=3, weights="distance")
+    ).fit(X_train, y_train)
+
+    y_pred = predict_df(X_test, targets, model)
+
+    predict_individual_contract(
+        np.array([[27, 64, 60.5, 53.0, 60.5]]), model, scaler, "Darnold"
+    )
+    predict_individual_contract(
+        np.array([[21, 1.0, 74.7, 64.0, 74.7]]), model, scaler, "Burrow"
+    )
+
+    X_test_unscaled = unscale_data(X_test.copy(), features, scaler)
+    test_df = format_test_df(contract_data, X_test_unscaled, y_pred)
+
+    return model
 
 
 def main():
 
-    contract_data = build_contract_length_df()
+    # contract_data = build_contract_length_df()
+    contract_data = pd.read_csv("contract_data_training_set.csv")
+    model = build_model(contract_data)
 
     start_age = 32
     baseline_qbr_proj = 60.7
