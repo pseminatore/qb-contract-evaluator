@@ -11,6 +11,85 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 
 
+def mean_production_before_year(row, qbr_data):
+    player_qbrs = qbr_data[qbr_data["player_id"] == row["espn_id"]]
+    prior_years_qbrs = player_qbrs[player_qbrs["season"] < row["year_signed"]]
+    if not prior_years_qbrs.empty:
+        return prior_years_qbrs["qbr_total"].mean()
+    return None
+
+
+def max_production_before_year(row, qbr_data):
+    player_qbrs = qbr_data[qbr_data["player_id"] == row["espn_id"]]
+    prior_years_qbrs = player_qbrs[player_qbrs["season"] < row["year_signed"]]
+    if not prior_years_qbrs.empty:
+        return prior_years_qbrs["qbr_total"].max()
+    return None
+
+
+def recent_production_before_year(row, qbr_data):
+    player_qbrs = qbr_data[qbr_data["player_id"] == row["espn_id"]]
+    prior_years_qbrs = player_qbrs[player_qbrs["season"] == row["prev_year_signed"]]
+    if not prior_years_qbrs.empty:
+        return prior_years_qbrs["qbr_total"][
+            prior_years_qbrs["qbr_total"].first_valid_index()
+        ]
+    return None
+
+
+def mean_wins_before_year(row, win_data):
+    player_wins = win_data[win_data["winning_qb_id"] == row["gsis_id"]]
+    prior_years_wins = player_wins[player_wins["season"] < row["year_signed"]]
+    if not prior_years_wins.empty:
+        return prior_years_wins["wins"].mean()
+    return None
+
+
+def max_wins_before_year(row, win_data):
+    player_wins = win_data[win_data["winning_qb_id"] == row["gsis_id"]]
+    prior_years_wins = player_wins[player_wins["season"] < row["year_signed"]]
+    if not prior_years_wins.empty:
+        return prior_years_wins["wins"].max()
+    return None
+
+
+def recent_wins_before_year(row, win_data):
+    player_wins = win_data[win_data["winning_qb_id"] == row["gsis_id"]]
+    prior_years_wins = player_wins[player_wins["season"] == row["prev_year_signed"]]
+    if not prior_years_wins.empty:
+        return prior_years_wins["wins"][prior_years_wins["wins"].first_valid_index()]
+    return None
+
+
+def scale_data(contract_data: pd.DataFrame, features: list, targets: list) -> tuple:
+    X = contract_data[features]
+    scaler = MinMaxScaler()
+    X_scaled = scaler.fit_transform(X)
+    X_scaled_dict = {}
+    for ix, colname in enumerate(features):
+        X_scaled_dict[colname] = X_scaled[:, ix]
+    X_scaled_df = pd.DataFrame(X_scaled_dict)
+    y = contract_data[targets]
+    return X_scaled_df, y, scaler
+
+
+def unscale_data(
+    scaled_data: pd.DataFrame, features: list, scaler: MinMaxScaler
+) -> pd.DataFrame:
+    scaled_data.reset_index(inplace=True)
+    index = scaled_data["index"]
+    scaled_data = scaled_data[features]
+    scaled_data_arr = scaled_data.to_numpy()
+    unscaled_data_arr = scaler.inverse_transform(scaled_data_arr)
+    unscaled_data_dict = {}
+    for ix, colname in enumerate(features):
+        unscaled_data_dict[colname] = unscaled_data_arr[:, ix]
+    unscaled_data_df = pd.DataFrame(unscaled_data_dict)
+    unscaled_data_df["index"] = index
+    unscaled_data_df.set_index("index", inplace=True)
+    return unscaled_data_df
+
+
 class BasicAgingCurveBuilder:
 
     def __init__(
@@ -247,323 +326,288 @@ class BasicAgingCurve:
         return model_func
 
 
-def mean_production_before_year(row, qbr_data):
-    player_qbrs = qbr_data[qbr_data["player_id"] == row["espn_id"]]
-    prior_years_qbrs = player_qbrs[player_qbrs["season"] < row["year_signed"]]
-    if not prior_years_qbrs.empty:
-        return prior_years_qbrs["qbr_total"].mean()
-    return None
+class ContractLengthProjectionBuilder:
 
+    def __init__(
+        self,
+        start_season: int = 2006,
+        end_season: int = 2023,
+        output_path: str = "contract_data_training_set.csv",
+    ) -> None:
+        self._start_season = start_season
+        self._end_season = end_season
+        self._output_path = output_path
+        self.build_contract_length_df()
+        return
 
-def max_production_before_year(row, qbr_data):
-    player_qbrs = qbr_data[qbr_data["player_id"] == row["espn_id"]]
-    prior_years_qbrs = player_qbrs[player_qbrs["season"] < row["year_signed"]]
-    if not prior_years_qbrs.empty:
-        return prior_years_qbrs["qbr_total"].max()
-    return None
+    def build_contract_length_df(self) -> pd.DataFrame:
+        """
+        features: age, avg QBR, GS, wins?, peak QBR, last season qbr, draft position
+        target: years, years_guaranteed
+        """
 
+        # Set season range
+        season_range = [szn for szn in range(self._start_season, self._end_season + 1)]
 
-def recent_production_before_year(row, qbr_data):
-    player_qbrs = qbr_data[qbr_data["player_id"] == row["espn_id"]]
-    prior_years_qbrs = player_qbrs[player_qbrs["season"] == row["prev_year_signed"]]
-    if not prior_years_qbrs.empty:
-        return prior_years_qbrs["qbr_total"][
-            prior_years_qbrs["qbr_total"].first_valid_index()
+        # Get players and contract data
+        contract_data = nfl.import_contracts()
+        contract_data = contract_data[contract_data["position"] == "QB"]
+        contract_data = contract_data[
+            contract_data["year_signed"] >= self._start_season
         ]
-    return None
+        contract_data = contract_data[contract_data["year_signed"] <= self._end_season]
+        contract_data["prev_year_signed"] = contract_data["year_signed"] - 1
+        contract_data["pct_guaranteed"] = contract_data["guaranteed"].astype(
+            float
+        ) / contract_data["value"].astype(float)
+        contract_data["years_guaranteed"] = (
+            contract_data["years"] * contract_data["pct_guaranteed"]
+        )
+        contract_data = contract_data[
+            [
+                "player",
+                "gsis_id",
+                "team",
+                "year_signed",
+                "prev_year_signed",
+                "years",
+                "years_guaranteed",
+                "value",
+                "pct_guaranteed",
+                "draft_overall",
+            ]
+        ]
+        contract_data.dropna(subset=["gsis_id"], inplace=True)
+
+        # Get full ID set for players
+        player_ids = nfl.import_ids()
+        player_ids = player_ids[player_ids["position"] == "QB"]
+        player_ids = player_ids[["gsis_id", "birthdate", "espn_id"]]
+        contract_data = pd.merge(
+            contract_data,
+            player_ids,
+            how="inner",
+            left_on="gsis_id",
+            right_on="gsis_id",
+        )
+        contract_data.dropna(subset=["espn_id"], inplace=True)
+
+        # Get QBR Data
+        qbr_data = nfl.import_qbr(years=season_range)
+        qbr_data = qbr_data[qbr_data["season_type"] == "Regular"]
+        qbr_data.dropna(subset=["player_id"], inplace=True)
+        qbr_data = qbr_data[["season", "player_id", "qbr_total"]]
+        contract_data["max_production_before_signing"] = contract_data.apply(
+            max_production_before_year, axis=1, qbr_data=qbr_data
+        )
+        contract_data["mean_production_before_signing"] = contract_data.apply(
+            mean_production_before_year, axis=1, qbr_data=qbr_data
+        )
+        contract_data["recent_production_before_signing"] = contract_data.apply(
+            recent_production_before_year, axis=1, qbr_data=qbr_data
+        )
+
+        contract_data.dropna(subset=["max_production_before_signing"], inplace=True)
+        contract_data.fillna(
+            {
+                "recent_production_before_signing": 0,
+                "max_production_before_signing": 0,
+                "mean_production_before_signing": 0,
+            },
+            inplace=True,
+        )
+
+        # Get career wins
+        win_data = nfl.import_schedules(years=season_range)
+        win_data = win_data[["home_qb_id", "away_qb_id", "result", "season"]]
+        win_data["winning_qb_id"] = win_data["home_qb_id"].where(
+            win_data["result"] > 0, win_data["away_qb_id"]
+        )
+        win_data = win_data[["winning_qb_id", "season", "result"]]
+        win_data = (
+            win_data.groupby(by=["winning_qb_id", "season"]).count().reset_index()
+        )
+        win_data.rename(columns={"result": "wins"}, inplace=True)
+        contract_data["max_wins_before_signing"] = contract_data.apply(
+            max_wins_before_year, axis=1, win_data=win_data
+        )
+        contract_data["mean_wins_before_signing"] = contract_data.apply(
+            mean_wins_before_year, axis=1, win_data=win_data
+        )
+        contract_data["recent_wins_before_signing"] = contract_data.apply(
+            recent_wins_before_year, axis=1, win_data=win_data
+        )
+
+        contract_data.dropna(subset=["max_wins_before_signing"], inplace=True)
+        contract_data.fillna(
+            {
+                "recent_wins_before_signing": 0,
+                "max_wins_before_signing": 0,
+                "mean_wins_before_signing": 0,
+            },
+            inplace=True,
+        )
+
+        # Get age on 09/01 of each season
+        contract_data["season_start"] = contract_data["year_signed"].apply(
+            lambda szn: f"{szn}-09-01"
+        )
+        contract_data["season_start_dt"] = pd.to_datetime(contract_data["season_start"])
+        contract_data["birthdate_dt"] = pd.to_datetime(contract_data["birthdate"])
+        contract_data["age_season_start"] = (
+            contract_data["season_start_dt"].dt.year
+            - contract_data["birthdate_dt"].dt.year
+        )
+        contract_data = contract_data[
+            [
+                col
+                for col in contract_data.columns
+                if col not in ["season_start", "season_start_dt", "birthdate_dt"]
+            ]
+        ]
+
+        # Fill UDFA with pick 300, slightly but noticeably later than other players
+        contract_data.fillna({"draft_overall": 300}, inplace=True)
+
+        contract_data.to_csv(self._output_path, index=False)
+
+        self._contract_data = contract_data
+
+        return contract_data
 
 
-def mean_wins_before_year(row, win_data):
-    player_wins = win_data[win_data["winning_qb_id"] == row["gsis_id"]]
-    prior_years_wins = player_wins[player_wins["season"] < row["year_signed"]]
-    if not prior_years_wins.empty:
-        return prior_years_wins["wins"].mean()
-    return None
+class ContractLengthProjection:
+    _target_vars: list[str] = ["years", "years_guaranteed"]
 
-
-def max_wins_before_year(row, win_data):
-    player_wins = win_data[win_data["winning_qb_id"] == row["gsis_id"]]
-    prior_years_wins = player_wins[player_wins["season"] < row["year_signed"]]
-    if not prior_years_wins.empty:
-        return prior_years_wins["wins"].max()
-    return None
-
-
-def recent_wins_before_year(row, win_data):
-    player_wins = win_data[win_data["winning_qb_id"] == row["gsis_id"]]
-    prior_years_wins = player_wins[player_wins["season"] == row["prev_year_signed"]]
-    if not prior_years_wins.empty:
-        return prior_years_wins["wins"][prior_years_wins["wins"].first_valid_index()]
-    return None
-
-
-def build_contract_length_df(
-    start_season: int = 2006, end_season: int = 2023
-) -> pd.DataFrame:
-    """
-    features: age, avg QBR, GS, wins?, peak QBR, last season qbr, draft position
-    target: years, years_guaranteed
-    """
-
-    # Set season range
-    season_range = [szn for szn in range(start_season, end_season + 1)]
-
-    # Get players and contract data
-    contract_data = nfl.import_contracts()
-    contract_data = contract_data[contract_data["position"] == "QB"]
-    contract_data = contract_data[contract_data["year_signed"] >= start_season]
-    contract_data = contract_data[contract_data["year_signed"] <= end_season]
-    contract_data["prev_year_signed"] = contract_data["year_signed"] - 1
-    contract_data["pct_guaranteed"] = contract_data["guaranteed"].astype(
-        float
-    ) / contract_data["value"].astype(float)
-    contract_data["years_guaranteed"] = (
-        contract_data["years"] * contract_data["pct_guaranteed"]
-    )
-    contract_data = contract_data[
-        [
-            "player",
-            "gsis_id",
-            "team",
-            "year_signed",
-            "prev_year_signed",
-            "years",
-            "years_guaranteed",
-            "value",
-            "pct_guaranteed",
+    def __init__(
+        self,
+        training_path: str = "contract_data_training_set.csv",
+        test_size: float = 0.1,
+        n_neighbors: int = 3,
+        feature_list: list[str] = [
+            "age_season_start",
             "draft_overall",
+            "max_production_before_signing",
+            "mean_production_before_signing",
+            "recent_production_before_signing",
+            "max_wins_before_signing",
+            "mean_wins_before_signing",
+            "recent_wins_before_signing",
+        ],
+    ) -> None:
+        self._training_path = training_path
+        self._feature_list = feature_list
+        self._test_size = test_size
+        self._n_neighbors = n_neighbors
+        contract_data = pd.read_csv(self._training_path)
+        if contract_data.empty:
+            contract_data = ContractLengthProjectionBuilder().build_contract_length_df()
+        self._contract_data = contract_data
+        self.build_model(self._contract_data)
+
+        return
+
+    def predict_individual_contract(
+        self,
+        ct: np.ndarray,
+        name: str,
+    ) -> None:
+        scaled_ct = self._scaler.transform(ct)
+        pred_ct = self._model.predict(scaled_ct)
+        print(
+            f"Projected {name} Contract: {pred_ct[0][0]:.01f} years, {pred_ct[0][1]:.02f} gtd"
+        )
+        return
+
+    def format_test_df(
+        self,
+        X_test: pd.DataFrame,
+        y_pred: pd.DataFrame,
+        y_act: pd.DataFrame,
+    ) -> pd.DataFrame:
+        X_test["row_num"] = range(len(X_test))
+        test_output = pd.merge(X_test, y_pred, left_on="row_num", right_index=True)
+        test_output = pd.merge(
+            self._contract_data[["player", "year_signed"]],
+            test_output,
+            how="inner",
+            left_index=True,
+            right_index=True,
+        )
+        test_output = test_output[
+            [col for col in test_output.columns if col != "row_num"]
         ]
-    ]
-    contract_data.dropna(subset=["gsis_id"], inplace=True)
+        y_act.columns = ["act_years", "act_years_guaranteed"]
+        test_output = pd.merge(
+            test_output, y_act, how="inner", left_index=True, right_index=True
+        )
+        test_output["pct_guaranteed"] = (
+            test_output["years_guaranteed"] / test_output["years"]
+        )
+        test_output["act_pct_guaranteed"] = (
+            test_output["act_years_guaranteed"] / test_output["act_years"]
+        )
 
-    # Get full ID set for players
-    player_ids = nfl.import_ids()
-    player_ids = player_ids[player_ids["position"] == "QB"]
-    player_ids = player_ids[["gsis_id", "birthdate", "espn_id"]]
-    contract_data = pd.merge(
-        contract_data, player_ids, how="inner", left_on="gsis_id", right_on="gsis_id"
-    )
-    contract_data.dropna(subset=["espn_id"], inplace=True)
+        test_output["years_diff"] = test_output["years"] - test_output["act_years"]
+        test_output["years_diff_abs"] = test_output["years_diff"].abs()
+        return test_output
 
-    # Get QBR Data
-    qbr_data = nfl.import_qbr(years=season_range)
-    qbr_data = qbr_data[qbr_data["season_type"] == "Regular"]
-    qbr_data.dropna(subset=["player_id"], inplace=True)
-    qbr_data = qbr_data[["season", "player_id", "qbr_total"]]
-    contract_data["max_production_before_signing"] = contract_data.apply(
-        max_production_before_year, axis=1, qbr_data=qbr_data
-    )
-    contract_data["mean_production_before_signing"] = contract_data.apply(
-        mean_production_before_year, axis=1, qbr_data=qbr_data
-    )
-    contract_data["recent_production_before_signing"] = contract_data.apply(
-        recent_production_before_year, axis=1, qbr_data=qbr_data
-    )
+    def score_model(self, X_test: pd.DataFrame, y_test: pd.DataFrame) -> float:
+        score = self._model.score(X_test, y_test)
+        print(f"r2: {score:.02f}")
+        return score
 
-    contract_data.dropna(subset=["max_production_before_signing"], inplace=True)
-    contract_data.fillna(
-        {
-            "recent_production_before_signing": 0,
-            "max_production_before_signing": 0,
-            "mean_production_before_signing": 0,
-        },
-        inplace=True,
-    )
+    def predict_df(self, X: pd.DataFrame, targets: list) -> pd.DataFrame:
+        y_pred = self._model.predict(X)
+        y_pred_dict = {}
+        for ix, colname in enumerate(targets):
+            y_pred_dict[colname] = y_pred[:, ix]
+        unscaled_data_df = pd.DataFrame(y_pred_dict)
+        return unscaled_data_df
 
-    # Get career wins
-    win_data = nfl.import_schedules(years=season_range)
-    win_data = win_data[["home_qb_id", "away_qb_id", "result", "season"]]
-    win_data["winning_qb_id"] = win_data["home_qb_id"].where(
-        win_data["result"] > 0, win_data["away_qb_id"]
-    )
-    win_data = win_data[["winning_qb_id", "season", "result"]]
-    win_data = win_data.groupby(by=["winning_qb_id", "season"]).count().reset_index()
-    win_data.rename(columns={"result": "wins"}, inplace=True)
-    contract_data["max_wins_before_signing"] = contract_data.apply(
-        max_wins_before_year, axis=1, win_data=win_data
-    )
-    contract_data["mean_wins_before_signing"] = contract_data.apply(
-        mean_wins_before_year, axis=1, win_data=win_data
-    )
-    contract_data["recent_wins_before_signing"] = contract_data.apply(
-        recent_wins_before_year, axis=1, win_data=win_data
-    )
+    def build_model(
+        self, contract_data: pd.DataFrame, run_evaluation: bool = False
+    ) -> None:
 
-    contract_data.dropna(subset=["max_wins_before_signing"], inplace=True)
-    contract_data.fillna(
-        {
-            "recent_wins_before_signing": 0,
-            "max_wins_before_signing": 0,
-            "mean_wins_before_signing": 0,
-        },
-        inplace=True,
-    )
+        X, y, scaler = scale_data(contract_data, self._feature_list, self._target_vars)
 
-    # Get age on 09/01 of each season
-    contract_data["season_start"] = contract_data["year_signed"].apply(
-        lambda szn: f"{szn}-09-01"
-    )
-    contract_data["season_start_dt"] = pd.to_datetime(contract_data["season_start"])
-    contract_data["birthdate_dt"] = pd.to_datetime(contract_data["birthdate"])
-    contract_data["age_season_start"] = (
-        contract_data["season_start_dt"].dt.year - contract_data["birthdate_dt"].dt.year
-    )
-    contract_data = contract_data[
-        [
-            col
-            for col in contract_data.columns
-            if col not in ["season_start", "season_start_dt", "birthdate_dt"]
-        ]
-    ]
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=self._test_size
+        )
+        model = MultiOutputRegressor(
+            KNeighborsRegressor(n_neighbors=self._n_neighbors, weights="distance")
+        ).fit(X_train, y_train)
 
-    # Fill UDFA with pick 300, slightly but noticeably later than other players
-    contract_data.fillna({"draft_overall": 300}, inplace=True)
+        self._model = model
+        self._scaler = scaler
 
-    contract_data.to_csv("contract_data_training_set.csv", index=False)
+        if run_evaluation:
+            self.evaluate_model(X_test, y_test)
 
-    return contract_data
+        return None
 
+    def evaluate_model(
+        self, X_test: pd.DataFrame, y_test: pd.DataFrame
+    ) -> pd.DataFrame:
+        self.score_model(X_test, y_test)
 
-def scale_data(contract_data: pd.DataFrame, features: list, targets: list) -> tuple:
-    X = contract_data[features]
-    scaler = MinMaxScaler()
-    X_scaled = scaler.fit_transform(X)
-    X_scaled_dict = {}
-    for ix, colname in enumerate(features):
-        X_scaled_dict[colname] = X_scaled[:, ix]
-    X_scaled_df = pd.DataFrame(X_scaled_dict)
-    y = contract_data[targets]
-    return X_scaled_df, y, scaler
+        y_pred = self.predict_df(X_test, self._target_vars)
 
-
-def unscale_data(
-    scaled_data: pd.DataFrame, features: list, scaler: MinMaxScaler
-) -> pd.DataFrame:
-    scaled_data.reset_index(inplace=True)
-    index = scaled_data["index"]
-    scaled_data = scaled_data[features]
-    scaled_data_arr = scaled_data.to_numpy()
-    unscaled_data_arr = scaler.inverse_transform(scaled_data_arr)
-    unscaled_data_dict = {}
-    for ix, colname in enumerate(features):
-        unscaled_data_dict[colname] = unscaled_data_arr[:, ix]
-    unscaled_data_df = pd.DataFrame(unscaled_data_dict)
-    unscaled_data_df["index"] = index
-    unscaled_data_df.set_index("index", inplace=True)
-    return unscaled_data_df
-
-
-def predict_individual_contract(
-    ct: np.ndarray, model: MultiOutputRegressor, scaler: MinMaxScaler, name: str
-) -> None:
-    scaled_ct = scaler.transform(ct)
-    pred_ct = model.predict(scaled_ct)
-    print(
-        f"Projected {name} Contract: {pred_ct[0][0]:.01f} years, {pred_ct[0][1]:.02f} gtd"
-    )
-    return
-
-
-def format_test_df(
-    contract_data: pd.DataFrame,
-    X_test: pd.DataFrame,
-    y_pred: pd.DataFrame,
-    y_act: pd.DataFrame,
-) -> pd.DataFrame:
-    X_test["row_num"] = range(len(X_test))
-    test_output = pd.merge(X_test, y_pred, left_on="row_num", right_index=True)
-    test_output = pd.merge(
-        contract_data[["player", "year_signed"]],
-        test_output,
-        how="inner",
-        left_index=True,
-        right_index=True,
-    )
-    test_output = test_output[[col for col in test_output.columns if col != "row_num"]]
-    y_act.columns = ["act_years", "act_years_guaranteed"]
-    test_output = pd.merge(
-        test_output, y_act, how="inner", left_index=True, right_index=True
-    )
-    test_output["pct_guaranteed"] = (
-        test_output["years_guaranteed"] / test_output["years"]
-    )
-    test_output["act_pct_guaranteed"] = (
-        test_output["act_years_guaranteed"] / test_output["act_years"]
-    )
-
-    test_output["years_diff"] = test_output["years"] - test_output["act_years"]
-    test_output["years_diff_abs"] = test_output["years_diff"].abs()
-    return test_output
-
-
-def score_model(
-    model: MultiOutputRegressor, X_test: pd.DataFrame, y_test: pd.DataFrame
-) -> float:
-    score = model.score(X_test, y_test)
-    print(f"r2: {score:.02f}")
-    return score
-
-
-def predict_df(
-    X: pd.DataFrame, targets: list, model: MultiOutputRegressor
-) -> pd.DataFrame:
-    y_pred = model.predict(X)
-    y_pred_dict = {}
-    for ix, colname in enumerate(targets):
-        y_pred_dict[colname] = y_pred[:, ix]
-    unscaled_data_df = pd.DataFrame(y_pred_dict)
-    return unscaled_data_df
-
-
-def build_model(contract_data: pd.DataFrame):
-    targets = ["years", "years_guaranteed"]
-    features = [
-        "age_season_start",
-        "draft_overall",
-        "max_production_before_signing",
-        "mean_production_before_signing",
-        "recent_production_before_signing",
-        "max_wins_before_signing",
-        "mean_wins_before_signing",
-        "recent_wins_before_signing",
-    ]
-
-    X, y, scaler = scale_data(contract_data, features, targets)
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1)
-    model = MultiOutputRegressor(
-        KNeighborsRegressor(n_neighbors=3, weights="distance")
-    ).fit(X_train, y_train)
-
-    score = score_model(model, X_test, y_test)
-
-    y_pred = predict_df(X_test, targets, model)
-
-    # predict_individual_contract(
-    #     np.array([[27, 64, 60.5, 53.0, 60.5]]), model, scaler, "Darnold"
-    # )
-    predict_individual_contract(
-        np.array([[21, 1.0, 74.7, 64.0, 74.7, 14.0, 10, 14.0]]), model, scaler, "Burrow"
-    )
-
-    X_test_unscaled = unscale_data(X_test.copy(), features, scaler)
-    test_df = format_test_df(contract_data, X_test_unscaled, y_pred, y_test)
-
-    return model
+        self.predict_individual_contract(
+            np.array([[21, 1.0, 74.7, 64.0, 74.7, 14.0, 10, 14.0]]),
+            "Burrow",
+        )
+        X_test_unscaled = unscale_data(X_test.copy(), self._feature_list, self._scaler)
+        test_df = self.format_test_df(X_test_unscaled, y_pred, y_test)
+        return test_df
 
 
 def main():
-
-    # contract_data = build_contract_length_df()
-    contract_data = pd.read_csv("contract_data_training_set.csv")
-    model = build_model(contract_data)
-
-    start_age = 32
-    baseline_qbr_proj = 60.7
-    years = 3
-    aging_curve = BasicAgingCurve(start_age, baseline_qbr_proj)
-    qbr_projections = aging_curve.project_qbr(n_years=years)
-    print(qbr_projections)
+    projection_model = ContractLengthProjection()
+    projection_model.predict_individual_contract(
+        np.array([[21, 1.0, 74.7, 64.0, 74.7, 14.0, 10, 14.0]]),
+        "Burrow",
+    )
 
 
 if __name__ == "__main__":
